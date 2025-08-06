@@ -1,0 +1,10 @@
+{
+  "name": "astochat-scheduler-service",
+  "version": "1.0.0",
+  "description": "",
+  "author": "Prashant Patil",
+  "license": "ISC",
+  "dependencies": {
+    "aws-sdk": "^2.1692.0"
+  }
+}

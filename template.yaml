@@ -1,0 +1,236 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Template for handling astrochat schedulers
+Parameters:
+  LambdaSg:
+    Description: "Lambda security group ID"
+    Type: AWS::EC2::SecurityGroup::Id
+  LambdaSubnets:
+    Description: "Lambda subnets"
+    Type: List<AWS::EC2::Subnet::Id>
+  LambdaEnv:
+    Description: "Environment"
+    Type: String
+  AstroServiceApiHost:
+    Description: "Astro Service host URL"
+    Type: String
+  AstroPaymentServiceApiHost:
+    Description: "Astro Payment Service host URL"
+    Type: String
+
+Resources:
+  astrochatpaymentreconcilation:
+    ## https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-function.html#sam-function-environment
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: AstroChat Payment Reconcilation Scheduler 
+      CodeUri: lambdaFunctions/payment/reconcilation
+      Environment:
+        Variables:
+          ENV: !Ref LambdaEnv
+          AstroPaymentServiceApiHost: !Ref AstroPaymentServiceApiHost
+      FunctionName: astrochatpaymentreconcilation
+      Handler: index.astrochatpaymentreconcilation
+      MemorySize: 128
+      Runtime: nodejs20.x
+      Timeout: 45
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSg
+        SubnetIds: !Ref LambdaSubnets
+      Policies:
+        - VPCAccessPolicy: {}
+      Role: !GetAtt AstroChatSchedulerRole.Arn
+      
+  astrostuckscheduler:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Astro Stuck Scheduler for checking stuck conversations
+      CodeUri: lambdaFunctions/astrostuck
+      Environment:
+        Variables:
+          ENV: !Ref LambdaEnv
+          AstroServiceApiHost: !Ref AstroServiceApiHost
+      FunctionName: astrostuckscheduler
+      Handler: index.astrostuckscheduler
+      MemorySize: 128
+      Runtime: nodejs20.x
+      Timeout: 30
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSg
+        SubnetIds: !Ref LambdaSubnets
+      Policies:
+        - VPCAccessPolicy: {}
+      Role: !GetAtt AstroChatSchedulerRole.Arn
+
+  AstroChatSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - "sts:AssumeRole"
+      Path: /
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: AstroChatSchedulerLambdaNetworking
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ec2:DescribeNetworkInterfaces"
+                  - "ec2:CreateNetworkInterface"
+                  - "ec2:DeleteNetworkInterface"
+                  - "ec2:DescribeInstances"
+                  - "ec2:AttachNetworkInterface"
+                Resource: "*"
+
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - events.amazonaws.com
+              Action:
+                - "sts:AssumeRole"
+      Policies:
+        - PolicyName: AstroChatSchedulerPermissionForEventsToInvokeLambda
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "lambda:InvokeFunction"
+                Resource: "*"
+
+  AstroChatPaymentReconcilationEventRule15min: 
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "AstroChatPaymentReconcilationEventRule15min"
+      ScheduleExpression: "cron(0,15,30,45 * * * ? *)"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: 
+            Fn::GetAtt: 
+              - "astrochatpaymentreconcilation"
+              - "Arn"
+          Id: "astrochatpaymentreconcilation"
+          Input: '{"duration":15}'
+      RoleArn: !GetAtt PermissionForEventsToInvokeLambda.Arn
+
+  AstroChatPaymentReconcilationEventRule4hr: 
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "AstroChatPaymentReconcilationEventRule4hr"
+      ScheduleExpression: "cron(5 */4 * * ? *)"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: 
+            Fn::GetAtt: 
+              - "astrochatpaymentreconcilation"
+              - "Arn"
+          Id: "astrochatpaymentreconcilation"
+          Input: '{"duration":240}'
+      RoleArn: !GetAtt PermissionForEventsToInvokeLambda.Arn
+
+  AstroChatPaymentReconcilationEventRule24hr: 
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "AstroChatPaymentReconcilationEventRule24hr"
+      ScheduleExpression: "cron(10 0 * * ? *)"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: 
+            Fn::GetAtt: 
+              - "astrochatpaymentreconcilation"
+              - "Arn"
+          Id: "astrochatpaymentreconcilation"
+          Input: '{"duration":1440}'
+      RoleArn: !GetAtt PermissionForEventsToInvokeLambda.Arn
+
+  AstroChatPaymentReconcilationEventRule48hr: 
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "AstroChatPaymentReconcilationEventRule48hr"
+      ScheduleExpression: "cron(15 0 1/2 * ? *)"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: 
+            Fn::GetAtt: 
+              - "astrochatpaymentreconcilation"
+              - "Arn"
+          Id: "astrochatpaymentreconcilation"
+          Input: '{"duration":2880}'
+      RoleArn: !GetAtt PermissionForEventsToInvokeLambda.Arn
+
+  EventBridgeLambdaPermissionAstroChatPaymentReconcilationEventRule15min:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt astrochatpaymentreconcilation.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AstroChatPaymentReconcilationEventRule15min.Arn
+
+  EventBridgeLambdaPermissionAstroChatPaymentReconcilationEventRule4hr:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt astrochatpaymentreconcilation.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AstroChatPaymentReconcilationEventRule4hr.Arn
+
+  EventBridgeLambdaPermissionAstroChatPaymentReconcilationEventRule24hr:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt astrochatpaymentreconcilation.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AstroChatPaymentReconcilationEventRule24hr.Arn
+
+  EventBridgeLambdaPermissionAstroChatPaymentReconcilationEventRule48hr:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt astrochatpaymentreconcilation.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AstroChatPaymentReconcilationEventRule48hr.Arn
+      
+  AstroStuckSchedulerEventRule5min: 
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "AstroStuckSchedulerEventRule5min"
+      ScheduleExpression: "cron(0/1 * * * ? *)"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: 
+            Fn::GetAtt: 
+              - "astrostuckscheduler"
+              - "Arn"
+          Id: "astrostuckscheduler"
+      RoleArn: !GetAtt PermissionForEventsToInvokeLambda.Arn
+      
+  EventBridgeLambdaPermissionAstroStuckSchedulerEventRule5min:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt astrostuckscheduler.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AstroStuckSchedulerEventRule5min.Arn

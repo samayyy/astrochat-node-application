@@ -1,0 +1,10 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "astrochat-sam-project-v1"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-6zcqu6rmnjnr"
+s3_prefix = "astrochat-sam-project-staging"
+region = "us-east-1"
+capabilities = "CAPABILITY_IAM" 
+parameter_overrides = "LambdaSg=\"sg-05a8e998c95daa036\" LambdaSubnets=\"subnet-065aac0cbcb6e6bb5, subnet-0013519efc42daf79\" LambdaEnv=\"staging\" AstroServiceApiHost=\"astro-service.us-east-1.staging.shaadi.internal\" AstroPaymentServiceApiHost=\"astro-payment.us-east-1.staging.shaadi.internal\""
