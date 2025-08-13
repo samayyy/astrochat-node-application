@@ -1,38 +1,95 @@
+variables:
+  REGION: "asia-south1"
+  GCP_PROJECT_ID_SANDBOX_DEV: "prj-astrochat-sandbox"
+  GCP_PROJECT_ID_PROD_PRODUCTION: "prj-astrochat-production"
+  GCP_SERVICE_ACCOUNT: "gitlab-runner-sa-sandbox@prj-astrochat-ops-sandbox.iam.gserviceaccount.com"
+  WIF_PROVIDER: "projects/682778875089/locations/global/workloadIdentityPools/gitlab-pool-astrochat-sandbox/providers/gitlab-ci-provider"
+  MEMORY: "256MB"
+  TIMEOUT: "60s"
+
 stages:
- - pre-deploy
- - deploy-staging
- - deploy-production
+  - deploy
 
+.deploy_template: &deploy_template
+  image: google/cloud-sdk:alpine
+  tags:
+    - gcp-gke-sandbox
+  id_tokens:
+    GITLAB_OIDC_TOKEN:
+      aud: "https://gitlab.com"
+  before_script:
+    - echo "$GITLAB_OIDC_TOKEN" > /tmp/gitlab_token.txt
+    - |
+      gcloud iam workload-identity-pools create-cred-config "$WIF_PROVIDER" \
+        --service-account="$GCP_SERVICE_ACCOUNT" \
+        --output-file=/tmp/gcp_credentials.json \
+        --credential-source-file=/tmp/gitlab_token.txt
+    - export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp_credentials.json
+    - gcloud auth login --cred-file=/tmp/gcp_credentials.json
+    - gcloud config set project "$TARGET_PROJECT"
+    - apk add --no-cache bash nodejs npm curl jq
+  after_script:
+    - rm -f /tmp/gitlab_token.txt /tmp/gcp_credentials.json
 
-pre-deploy:
- stage: pre-deploy
- script:
-    - echo "---Pre-Deploy---"
- environment:
-    name: staging
- tags:
-    - sam
-
-staging-runner:
- stage: deploy-staging
- script:
-    - bash deploy.sh staging
- environment:
-    name: staging
- when: manual
- tags:
-    - sam
-    
-
-    
-production-runner:
- stage: deploy-production
- script:
-   - bash deploy.sh prod
- environment:
-   name: production
- rules:
-   - if: $CI_COMMIT_TAG != null
-     when: manual
- tags:
-   - sam
+Deploy-Functions:
+  <<: *deploy_template
+  stage: deploy
+  script:
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - git fetch origin $CI_COMMIT_BEFORE_SHA
+    - CHANGED=$(git diff --name-only $CI_COMMIT_BEFORE_SHA $CI_COMMIT_SHA)
+    - echo "$CHANGED"
+    - DEPLOY=false
+    - |
+      if echo "$CHANGED" | grep -q '^lambdaFunctions/astrostuck/'; then
+        gcloud functions deploy astrostuckscheduler \
+          --gen2 \
+          --runtime nodejs20 \
+          --entry-point astrostuckscheduler \
+          --source lambdaFunctions/astrostuck \
+          --trigger-http \
+          --region $REGION \
+          --project $TARGET_PROJECT \
+          --service-account $GCP_SERVICE_ACCOUNT \
+          --memory $MEMORY \
+          --timeout $TIMEOUT \
+          --allow-unauthenticated
+        URL=$(gcloud functions describe astrostuckscheduler --region $REGION --format='value(serviceConfig.uri)')
+        gcloud scheduler jobs create http astrostuck-scheduler --schedule '*/5 * * * *' --uri "$URL" --http-method POST --location $REGION || \
+        gcloud scheduler jobs update http astrostuck-scheduler --schedule '*/5 * * * *' --uri "$URL" --http-method POST --location $REGION
+        DEPLOY=true
+      fi
+    - |
+      if echo "$CHANGED" | grep -q '^lambdaFunctions/payment/reconcilation/'; then
+        gcloud functions deploy astrochatpaymentreconcilation \
+          --gen2 \
+          --runtime nodejs20 \
+          --entry-point astrochatpaymentreconcilation \
+          --source lambdaFunctions/payment/reconcilation \
+          --trigger-http \
+          --region $REGION \
+          --project $TARGET_PROJECT \
+          --service-account $GCP_SERVICE_ACCOUNT \
+          --memory $MEMORY \
+          --timeout $TIMEOUT \
+          --allow-unauthenticated
+        BASE_URL=$(gcloud functions describe astrochatpaymentreconcilation --region $REGION --format='value(serviceConfig.uri)')
+        gcloud scheduler jobs create http payment-recon-15min --schedule '0,15,30,45 * * * *' --uri "$BASE_URL" --http-method POST --message-body '{"duration":15}' --location $REGION || \
+        gcloud scheduler jobs update http payment-recon-15min --schedule '0,15,30,45 * * * *' --uri "$BASE_URL" --http-method POST --message-body '{"duration":15}' --location $REGION
+        gcloud scheduler jobs create http payment-recon-4hr --schedule '5 */4 * * *' --uri "$BASE_URL" --http-method POST --message-body '{"duration":240}' --location $REGION || \
+        gcloud scheduler jobs update http payment-recon-4hr --schedule '5 */4 * * *' --uri "$BASE_URL" --http-method POST --message-body '{"duration":240}' --location $REGION
+        gcloud scheduler jobs create http payment-recon-24hr --schedule '10 0 * * *' --uri "$BASE_URL" --http-method POST --message-body '{"duration":1440}' --location $REGION || \
+        gcloud scheduler jobs update http payment-recon-24hr --schedule '10 0 * * *' --uri "$BASE_URL" --http-method POST --message-body '{"duration":1440}' --location $REGION
+        gcloud scheduler jobs create http payment-recon-48hr --schedule '15 0 */2 * *' --uri "$BASE_URL" --http-method POST --message-body '{"duration":2880}' --location $REGION || \
+        gcloud scheduler jobs update http payment-recon-48hr --schedule '15 0 */2 * *' --uri "$BASE_URL" --http-method POST --message-body '{"duration":2880}' --location $REGION
+        DEPLOY=true
+      fi
+    - if [ "$DEPLOY" = false ]; then echo "No function changes detected"; fi
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^dev-.*/ || $CI_COMMIT_BRANCH =~ /^dev_.*/'
+      variables:
+        TARGET_PROJECT: $GCP_PROJECT_ID_SANDBOX_DEV
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      variables:
+        TARGET_PROJECT: $GCP_PROJECT_ID_PROD_PRODUCTION
+    - when: never

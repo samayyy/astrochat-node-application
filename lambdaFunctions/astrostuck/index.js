@@ -1,39 +1,38 @@
-const http = require('http')
-const astrostuckscheduler = function(event, context) {
-    const astroServiceApi = process.env['AstroServiceApiHost'];
+const http = require('http');
+
+/**
+ * GCP Cloud Function to check for stuck astrologer conversations.
+ *
+ * @param {object} req The HTTP request object.
+ * @param {object} res The HTTP response object.
+ */
+exports.astrostuckscheduler = (req, res) => {
+    const astroServiceApi = process.env.AstroServiceApiHost;
 
     const options = {
         host: astroServiceApi,
         path: '/astro/v1/metrics/astrologer/status-tracking',
         method: 'GET',
-        headers: {    
+        headers: {
             'Content-Type': 'application/json'
         },
     };
 
-    const req = http.request(options, res => {
-        let response = '';
-        res.on('data', chunk => {
-            response += chunk;
+    const request = http.request(options, response => {
+        let responseData = '';
+        response.on('data', chunk => {
+            responseData += chunk;
         });
-        res.on('end', () => {
-            try {
-                if (response) {
-                    response = JSON.parse(response);
-                    console.log('\n response%j', response);
-                }
-            } catch (error) {
-                console.log('\n Error parsing response:', error);
-            }
+        response.on('end', () => {
+            console.log('Response from astro service:', responseData);
+            res.status(200).send('Successfully triggered astro stuck scheduler.');
         });
     });
-    
-    req.on('error', error => {
-        console.log("error", JSON.stringify(error));
-    });
-    
-    req.end();
-    console.log('\n astrostuckscheduler finished');
-};
 
-module.exports = { astrostuckscheduler }
+    request.on('error', error => {
+        console.error("Error calling astro service:", error);
+        res.status(500).send("Failed to trigger astro stuck scheduler.");
+    });
+
+    request.end();
+};
